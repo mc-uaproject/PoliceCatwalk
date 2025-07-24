@@ -1,0 +1,21 @@
+teleport:
+  # Time to prepare before teleportation (seconds)
+  preparationTimeSeconds: 30
+  # Cooldown between requests for the same player (seconds)
+  requestCooldownSeconds: 10
+
+effects:
+  # Enable particle effects during teleportation
+  enableParticleEffects: true
+  # Enable sound effects during teleportation
+  enableSoundEffects: true
+
+language:
+  # Default language (uk = Ukrainian, en = English)
+  default: "uk"
+
+logging:
+  # Enable logging of teleport operations
+  enableTeleportLog: true
+  # Maximum log file size in MB before rotation
+  maxLogFileSizeMB: 10

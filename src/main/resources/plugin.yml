@@ -1,0 +1,8 @@
+name: PoliceCatwalk
+version: '${version}'
+main: dev.ua.ikeepcalm.policeCatwalk.PoliceCatwalk
+api-version: '1.21'
+authors: [ ikeepcalm ]
+description: "Police teleport management system with visual effects and translations"
+website: "https://uaproject.net"
+depend: [ CatWalk ]
