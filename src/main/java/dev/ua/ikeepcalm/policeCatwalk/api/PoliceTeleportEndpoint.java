@@ -57,7 +57,7 @@ public class PoliceTeleportEndpoint {
                     @OpenApiResponse(status = "500", description = "Internal server error")
             }
     )
-    @BridgeEventHandler(requiresAuth = false, description = "Initiates police teleport request", logRequests = true, scopes = {"police"})
+    @BridgeEventHandler(description = "Initiates police teleport request", logRequests = true, scopes = {"police"})
     public CompletableFuture<BridgeApiResponse<TeleportResponse>> requestTeleport(@BridgeRequestBody TeleportRequest request) {
         try {
             if (request == null || request.getPlayerName() == null || request.getPlayerName().trim().isEmpty()) {
@@ -115,7 +115,7 @@ public class PoliceTeleportEndpoint {
                     @OpenApiResponse(status = "500", description = "Internal server error")
             }
     )
-    @BridgeEventHandler(requiresAuth = false, description = "Returns police officer to original location", logRequests = true, scopes = {"police"})
+    @BridgeEventHandler(description = "Returns police officer to original location", logRequests = true, scopes = {"police"})
     public CompletableFuture<BridgeApiResponse<TeleportResponse>> returnPlayer(@BridgeQueryParam("player") String playerName) {
         try {
             if (playerName == null || playerName.trim().isEmpty()) {
