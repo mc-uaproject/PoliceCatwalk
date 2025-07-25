@@ -13,7 +13,7 @@ public class ParticleEffects {
     public static void playTeleportEffect(Player player) {
         Location location = player.getLocation();
         
-        BukkitTask spiralTask = Bukkit.getScheduler().runTaskTimer(PoliceCatwalk.getInstance(), new Runnable() {
+        Bukkit.getScheduler().runTaskTimer(PoliceCatwalk.getInstance(), new Runnable() {
             int ticks = 0;
             double radius = 3.0;
             double height = 4.0;
@@ -21,7 +21,6 @@ public class ParticleEffects {
             @Override
             public void run() {
                 if (ticks >= 40) {
-                    this.cancel();
                     return;
                 }
                 
@@ -64,10 +63,6 @@ public class ParticleEffects {
                 }
                 
                 ticks++;
-            }
-            
-            private void cancel() {
-                Bukkit.getScheduler().cancelTask(this.hashCode());
             }
         }, 0L, 1L);
     }

@@ -19,25 +19,25 @@ import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class TeleportManager {
-    
+
     private final PoliceCatwalk plugin;
     private final TranslationManager translationManager;
     private final Path logFile;
     private final DateTimeFormatter logFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-    
+
     private final Map<String, Long> requestCooldowns = new ConcurrentHashMap<>();
     private final Map<String, TeleportSession> activeSessions = new ConcurrentHashMap<>();
     private final Map<String, BukkitTask> preparationTasks = new ConcurrentHashMap<>();
+    private final Map<String, Integer> failedAttempts = new ConcurrentHashMap<>();
 
     public TeleportManager(PoliceCatwalk plugin, TranslationManager translationManager) {
         this.plugin = plugin;
         this.translationManager = translationManager;
         this.logFile = plugin.getDataFolder().toPath().resolve("teleport_log.txt");
-        
+
         try {
             Files.createDirectories(logFile.getParent());
             if (!Files.exists(logFile)) {
@@ -51,12 +51,15 @@ public class TeleportManager {
     public TeleportResponse processTeleportRequest(TeleportRequest request) {
         String playerName = request.getPlayerName();
         long currentTime = System.currentTimeMillis();
-        
-        if (requestCooldowns.containsKey(playerName) && 
-            currentTime - requestCooldowns.get(playerName) < 10000) {
+
+        int attempts = failedAttempts.getOrDefault(playerName, 0);
+        long cooldownTime = attempts > 3 ? 30000 : 10000;
+
+        if (requestCooldowns.containsKey(playerName) &&
+            currentTime - requestCooldowns.get(playerName) < cooldownTime) {
             return TeleportResponse.builder()
                     .success(false)
-                    .message("Request cooldown active. Please wait.")
+                    .message("Request cooldown active. Please wait " + (cooldownTime / 1000) + " seconds.")
                     .playerName(playerName)
                     .timestamp(currentTime)
                     .build();
@@ -97,9 +100,19 @@ public class TeleportManager {
                     .build();
         }
 
+        if (!isSafeLocation(targetLocation)) {
+            failedAttempts.put(playerName, attempts + 1);
+            return TeleportResponse.builder()
+                    .success(false)
+                    .message("Target location is unsafe")
+                    .playerName(playerName)
+                    .timestamp(currentTime)
+                    .build();
+        }
+
         requestCooldowns.put(playerName, currentTime);
         String teleportId = "tp_" + playerName + "_" + currentTime;
-        
+
         TeleportSession session = new TeleportSession(
                 teleportId,
                 player.getLocation().clone(),
@@ -109,8 +122,9 @@ public class TeleportManager {
                 request.getRequesterDiscordName(),
                 currentTime
         );
-        
+
         activeSessions.put(playerName, session);
+        failedAttempts.remove(playerName);
         startPreparationSequence(player, session);
         logTeleportOperation("REQUEST", session, playerName);
 
@@ -125,7 +139,7 @@ public class TeleportManager {
 
     public TeleportResponse returnPlayer(String playerName) {
         long currentTime = System.currentTimeMillis();
-        
+
         TeleportSession session = activeSessions.get(playerName);
         if (session == null) {
             return TeleportResponse.builder()
@@ -154,10 +168,10 @@ public class TeleportManager {
 
         ParticleEffects.playReturnEffect(player);
         player.teleport(session.getOriginalLocation());
-        
+
         Component returnMessage = translationManager.getMessage("teleport.returned", player);
         player.sendMessage(returnMessage);
-        
+
         activeSessions.remove(playerName);
         logTeleportOperation("RETURN", session, playerName);
 
@@ -175,12 +189,12 @@ public class TeleportManager {
                 .append(Component.text(" "))
                 .append(translationManager.getMessage("teleport.reason", player))
                 .append(Component.text(": " + (session.getReason() != null ? session.getReason() : "N/A")));
-        
+
         player.sendMessage(initialMessage);
-        
+
         BukkitTask countdownTask = Bukkit.getScheduler().runTaskTimer(plugin, new Runnable() {
             int countdown = 30;
-            
+
             @Override
             public void run() {
                 if (countdown <= 0) {
@@ -188,13 +202,13 @@ public class TeleportManager {
                     preparationTasks.remove(player.getName());
                     return;
                 }
-                
+
                 if (countdown <= 10 || countdown % 5 == 0) {
                     Component countdownMessage = translationManager.getMessage("teleport.countdown", player)
                             .append(Component.text(": " + countdown));
-                    
+
                     player.sendActionBar(countdownMessage);
-                    
+
                     if (countdown <= 5) {
                         Title title = Title.title(
                                 translationManager.getMessage("teleport.preparing", player),
@@ -203,29 +217,29 @@ public class TeleportManager {
                         player.showTitle(title);
                     }
                 }
-                
+
                 countdown--;
             }
         }, 0L, 20L);
-        
+
         preparationTasks.put(player.getName(), countdownTask);
     }
 
     private void executeTeleport(Player player, TeleportSession session) {
         ParticleEffects.playTeleportEffect(player);
-        
+
         Bukkit.getScheduler().runTaskLater(plugin, () -> {
             player.teleport(session.getTargetLocation());
-            
+
             Component teleportedMessage = translationManager.getMessage("teleport.completed", player);
             player.sendMessage(teleportedMessage);
-            
+
             Title completedTitle = Title.title(
                     translationManager.getMessage("teleport.completed", player),
                     Component.empty()
             );
             player.showTitle(completedTitle);
-            
+
             logTeleportOperation("EXECUTE", session, player.getName());
         }, 40L);
     }
@@ -240,11 +254,51 @@ public class TeleportManager {
                     session.getReason() != null ? session.getReason() : "N/A",
                     session.getRequesterDiscordName() != null ? session.getRequesterDiscordName() : "N/A"
             );
-            
+
             Files.write(logFile, logEntry.getBytes(), StandardOpenOption.APPEND);
         } catch (IOException e) {
             plugin.getLogger().warning("Failed to write to log file: " + e.getMessage());
         }
+    }
+
+    private boolean isSafeLocation(Location location) {
+        if (location.getWorld() == null) {
+            return false;
+        }
+
+        double x = location.getX();
+        double y = location.getY();
+        double z = location.getZ();
+
+        if (Math.abs(x) > 30000000 || Math.abs(z) > 30000000) {
+            return false;
+        }
+
+        if (y < -64 || y > 320) {
+            return false;
+        }
+
+        try {
+            Location checkLocation = location.clone();
+            if (!location.getWorld().isChunkLoaded(checkLocation.getBlockX() >> 4, checkLocation.getBlockZ() >> 4)) {
+                location.getWorld().loadChunk(checkLocation.getBlockX() >> 4, checkLocation.getBlockZ() >> 4);
+            }
+
+            if (checkLocation.getBlock().getType().isSolid() ||
+                checkLocation.clone().add(0, 1, 0).getBlock().getType().isSolid()) {
+                return false;
+            }
+
+            if (checkLocation.clone().subtract(0, 1, 0).getBlock().getType().isAir()) {
+                return false;
+            }
+
+        } catch (Exception e) {
+            plugin.getLogger().warning("Error checking location safety: " + e.getMessage());
+            return false;
+        }
+
+        return true;
     }
 
     public void stop() {
@@ -255,6 +309,7 @@ public class TeleportManager {
         }
         preparationTasks.clear();
         activeSessions.clear();
+        failedAttempts.clear();
     }
 
     @Data
