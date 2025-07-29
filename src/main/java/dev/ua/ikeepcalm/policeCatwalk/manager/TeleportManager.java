@@ -1,6 +1,7 @@
 package dev.ua.ikeepcalm.policeCatwalk.manager;
 
 import dev.ua.ikeepcalm.policeCatwalk.PoliceCatwalk;
+import dev.ua.ikeepcalm.policeCatwalk.dto.PlayerTeleportRequest;
 import dev.ua.ikeepcalm.policeCatwalk.dto.TeleportRequest;
 import dev.ua.ikeepcalm.policeCatwalk.dto.TeleportResponse;
 import dev.ua.ikeepcalm.policeCatwalk.utils.ParticleEffects;
@@ -10,6 +11,7 @@ import net.kyori.adventure.title.Title;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
+import org.bukkit.generator.WorldInfo;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.io.IOException;
@@ -94,21 +96,23 @@ public class TeleportManager {
         if (targetLocation.getWorld() == null) {
             return TeleportResponse.builder()
                     .success(false)
-                    .message("Target world not found")
+                    .message("Target world not found. Possible worlds: " + String.join(", ", Bukkit.getWorlds().stream().map(WorldInfo::getName).toList()))
                     .playerName(playerName)
                     .timestamp(currentTime)
                     .build();
         }
 
-        if (!isSafeLocation(targetLocation)) {
+        Location safeLocation = findSafeLocation(targetLocation);
+        if (safeLocation == null) {
             failedAttempts.put(playerName, attempts + 1);
             return TeleportResponse.builder()
                     .success(false)
-                    .message("Target location is unsafe")
+                    .message("Could not find safe location nearby")
                     .playerName(playerName)
                     .timestamp(currentTime)
                     .build();
         }
+        targetLocation = safeLocation;
 
         requestCooldowns.put(playerName, currentTime);
         String teleportId = "tp_" + playerName + "_" + currentTime;
@@ -131,6 +135,91 @@ public class TeleportManager {
         return TeleportResponse.builder()
                 .success(true)
                 .message("Teleport request initiated successfully")
+                .playerName(playerName)
+                .timestamp(currentTime)
+                .teleportId(teleportId)
+                .build();
+    }
+
+    public TeleportResponse processTeleportToPlayerRequest(PlayerTeleportRequest request) {
+        String playerName = request.getPlayerName();
+        String targetPlayerName = request.getTargetPlayerName();
+        long currentTime = System.currentTimeMillis();
+
+        int attempts = failedAttempts.getOrDefault(playerName, 0);
+        long cooldownTime = attempts > 3 ? 30000 : 10000;
+
+        if (requestCooldowns.containsKey(playerName) &&
+            currentTime - requestCooldowns.get(playerName) < cooldownTime) {
+            return TeleportResponse.builder()
+                    .success(false)
+                    .message("Request cooldown active. Please wait " + (cooldownTime / 1000) + " seconds.")
+                    .playerName(playerName)
+                    .timestamp(currentTime)
+                    .build();
+        }
+
+        Player player = Bukkit.getPlayer(playerName);
+        if (player == null || !player.isOnline()) {
+            return TeleportResponse.builder()
+                    .success(false)
+                    .message("Player not found or offline")
+                    .playerName(playerName)
+                    .timestamp(currentTime)
+                    .build();
+        }
+
+        Player targetPlayer = Bukkit.getPlayer(targetPlayerName);
+        if (targetPlayer == null || !targetPlayer.isOnline()) {
+            return TeleportResponse.builder()
+                    .success(false)
+                    .message("Target player not found or offline")
+                    .playerName(playerName)
+                    .timestamp(currentTime)
+                    .build();
+        }
+
+        if (activeSessions.containsKey(playerName)) {
+            return TeleportResponse.builder()
+                    .success(false)
+                    .message("Player already has an active teleport session")
+                    .playerName(playerName)
+                    .timestamp(currentTime)
+                    .build();
+        }
+
+        Location targetLocation = findSafeLocation(targetPlayer.getLocation());
+        if (targetLocation == null) {
+            failedAttempts.put(playerName, attempts + 1);
+            return TeleportResponse.builder()
+                    .success(false)
+                    .message("Could not find safe location near target player")
+                    .playerName(playerName)
+                    .timestamp(currentTime)
+                    .build();
+        }
+
+        requestCooldowns.put(playerName, currentTime);
+        String teleportId = "tp_" + playerName + "_" + currentTime;
+
+        TeleportSession session = new TeleportSession(
+                teleportId,
+                player.getLocation().clone(),
+                targetLocation,
+                request.getReason(),
+                request.getRequesterDiscordId(),
+                request.getRequesterDiscordName(),
+                currentTime
+        );
+
+        activeSessions.put(playerName, session);
+        failedAttempts.remove(playerName);
+        startPreparationSequence(player, session);
+        logTeleportOperation("REQUEST_TO_PLAYER", session, playerName);
+
+        return TeleportResponse.builder()
+                .success(true)
+                .message("Teleport to player request initiated successfully")
                 .playerName(playerName)
                 .timestamp(currentTime)
                 .teleportId(teleportId)
@@ -259,6 +348,31 @@ public class TeleportManager {
         } catch (IOException e) {
             plugin.getLogger().warning("Failed to write to log file: " + e.getMessage());
         }
+    }
+
+    private Location findSafeLocation(Location originalLocation) {
+        if (isSafeLocation(originalLocation)) {
+            return originalLocation;
+        }
+
+        int searchRadius = 5;
+        for (int r = 1; r <= searchRadius; r++) {
+            for (int x = -r; x <= r; x++) {
+                for (int z = -r; z <= r; z++) {
+                    if (Math.abs(x) == r || Math.abs(z) == r) {
+                        Location testLocation = originalLocation.clone().add(x, 0, z);
+                        
+                        for (int y = -2; y <= 5; y++) {
+                            Location candidateLocation = testLocation.clone().add(0, y, 0);
+                            if (isSafeLocation(candidateLocation)) {
+                                return candidateLocation;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     private boolean isSafeLocation(Location location) {
